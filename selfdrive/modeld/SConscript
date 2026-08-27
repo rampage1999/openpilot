@@ -2,6 +2,7 @@ import glob
 import json
 import os
 import sys, subprocess
+import time
 from SCons.Script import Action, Value
 from openpilot.common.file_chunker import chunk_file, get_chunk_targets, get_existing_chunks
 from openpilot.common.transformations.camera import _ar_ox_fisheye, _os_fisheye
@@ -98,12 +99,37 @@ for usbgpu in [False, True] if USBGPU else [False]:
         f'--output {target_pkl_path} --frame-skip {frame_skip}')
   onnx_sizes_sum = sum(os.path.getsize(f) for f in driving_onnx_deps)
   chunk_targets = get_chunk_targets(target_pkl_path, estimate_pickle_max_size(onnx_sizes_sum))
+  def do_compile(target, source, env, command=cmd, pkl=target_pkl_path, chunks=chunk_targets):
+    # Chestnut may enumerate on USB before its PCIe link is ready.
+    probe_cmd = [sys.executable, '-c', 'from openpilot.selfdrive.modeld.compile_modeld import Device; Device[Device.DEFAULT]']
+    probe_env = {**env['ENV'], 'DEV': 'USB+AMD'}
+    ready = False
+    for attempt in range(3):
+      if attempt:
+        time.sleep(1)
+      try:
+        ready = subprocess.run(probe_cmd, env=probe_env, capture_output=True, timeout=10).returncode == 0
+      except subprocess.TimeoutExpired:
+        pass
+      if ready:
+        break
+    if not ready:
+      print("chestnut not ready, skipping big model build")
+      return
+    if ret := env.Execute(command):
+      print(f"big model build failed ({ret}), falling back to the standard model")
+      return
+    try:
+      chunk_file(pkl, chunks)
+    except Exception as e:
+      print(f"big model chunking failed ({e}), falling back to the standard model")
   def do_chunk(target, source, env, pkl=target_pkl_path, chunks=chunk_targets):
     chunk_file(pkl, chunks)
+  actions = Action(do_compile, "  [USBGPU] $TARGET") if usbgpu else [cmd, Action(do_chunk, "  [CHUNK] $TARGET")]
   node = lenv.Command(
     chunk_targets,
     tinygrad_files + compile_modeld_script + driving_onnx_deps + [Value(chunk_targets), chunker_file],
-    [cmd, Action(do_chunk, "  [CHUNK] $TARGET")],
+    actions,
   )
   if usbgpu:
     lenv.SideEffect(usbgpu_lock, node)
