@@ -16,9 +16,16 @@ def _patch_tinygrad_fetch_fw():
   from tinygrad import helpers
   _orig = helpers.fetch_fw
   def fetch_fw(path, name, sha256):
-    p = pathlib.Path(f"/lib/firmware/{path}/{name}.zst")
-    if p.is_file():
-      blob = zstandard.ZstdDecompressor().stream_reader(p.read_bytes()).read()
+    # AGNOS ships the amdgpu microcode the USB GPU's userspace driver needs; prefer it
+    # over the network, since the device may well be offline while building
+    for fp, zst in ((pathlib.Path(f"/lib/firmware/{path}/{name}.zst"), True),
+                    (pathlib.Path(f"/lib/firmware/{path}/{name}"), False)):
+      if not fp.is_file():
+        continue
+      try:
+        blob = zstandard.ZstdDecompressor().stream_reader(fp.read_bytes()).read() if zst else fp.read_bytes()
+      except Exception:
+        continue
       if hashlib.sha256(blob).hexdigest() == sha256:
         return blob
     return _orig(path, name, sha256)
