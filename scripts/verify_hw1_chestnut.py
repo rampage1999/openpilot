@@ -88,11 +88,10 @@ need_text("openpilot/cereal/services.py", "modelDataV2SP", "SP model service")
 need_file("openpilot/system/hardware/chestnut/flash.py", "chestnut flasher")
 need_file("openpilot/system/hardware/chestnut/firmware_wrapped.bin", "chestnut firmware")
 need_text("openpilot/cereal/log.capnp", "struct ChestnutState", "eGPU telemetry schema")
-need_text("openpilot/selfdrive/modeld/helpers.py", "def usbgpu_present", "eGPU detection")
-need_text("openpilot/selfdrive/modeld/helpers.py", "def usbgpu_compiled", "big-model gate")
-need_text_if_present("openpilot/selfdrive/modeld/models/tg_input_devices.json", '"usbgpu"', "eGPU tinygrad device map")
-need_text_if_present("openpilot/selfdrive/modeld/models/tg_input_devices.json", "AMD", "eGPU queue device")
-need_text("openpilot/sunnypilot/models/fetcher.py", "MODEL_URL_USBGPU", "eGPU model bundle URL")
+need_text("openpilot/selfdrive/modeld/helpers.py", "def chestnut_present", "eGPU detection (upstream renamed usbgpu -> chestnut)")
+need_text("openpilot/selfdrive/modeld/helpers.py", "def chestnut_compiled", "big-model gate (upstream renamed usbgpu -> chestnut)")
+need_text("openpilot/selfdrive/modeld/modeld.py", "chestnutGpuState", "eGPU telemetry published")
+need_text("openpilot/sunnypilot/models/fetcher.py", "MODEL_URL_CHESTNUT", "eGPU model bundle URL (upstream renamed usbgpu -> chestnut)")
 # Chestnut weights are fetched at runtime by sunnypilot, NOT vendored like comma does.
 checks += 1
 if list((ROOT / "openpilot/selfdrive/modeld/models").glob("big_driving_tinygrad.pkl.chunk*")):
@@ -113,6 +112,8 @@ for needle, why in [
 need_file("opendbc_repo/opendbc/car/tesla/teslacan_legacy.py", "HW1 CAN builder")
 need_file("opendbc_repo/opendbc/car/tesla/carcontroller.py", "Tesla actuation")
 need_file("opendbc_repo/opendbc/car/tesla/radar_interface.py", "HW1 radar")
+need_file("opendbc_repo/opendbc/safety/modes/tesla_legacy.h", "HW1 safety hooks (safety lives opendbc-side; panda ignition moved to opendbc)")
+need_file("opendbc_repo/opendbc/dbc/tesla_can.dbc", "HW1 CAN DBC")
 
 print(f"verify_hw1_chestnut: {checks} checks, {len(failures)} failure(s), {len(skipped)} skipped\n")
 for sk in skipped:

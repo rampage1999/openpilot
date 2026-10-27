@@ -6,12 +6,10 @@ See the LICENSE.md file in the root directory for more details.
 """
 
 import time
-import os
 import requests
 from requests.exceptions import (SSLError, RequestException, HTTPError)
 from openpilot.common.params import Params
 from openpilot.common.swaglog import cloudlog
-from openpilot.common.hardware.hw import Paths
 from openpilot.sunnypilot.models.helpers import is_bundle_version_compatible
 from openpilot.cereal import custom
 
@@ -27,34 +25,10 @@ class ModelParser:
     return download_uri
 
   @staticmethod
-  def _parse_chunk(chunk_data) -> custom.ModelManagerSP.Chunk:
-    chunk = custom.ModelManagerSP.Chunk()
-    chunk.fileName = chunk_data.get("file_name")
-    chunk.sha256 = chunk_data.get("sha256")
-    return chunk
-
-  @staticmethod
   def _parse_artifact(artifact_data) -> custom.ModelManagerSP.Artifact:
     artifact = custom.ModelManagerSP.Artifact()
     artifact.fileName = artifact_data.get("file_name")
     artifact.downloadUri = ModelParser._parse_download_uri(artifact_data.get("download_uri", {}))
-
-    if "chunks" in artifact_data:
-      artifact.chunks = [ModelParser._parse_chunk(chunk_data) for chunk_data in artifact_data["chunks"]]
-
-      try:
-        model_dir = Paths.model_root()
-        os.makedirs(model_dir, exist_ok=True)
-        manifest_path = os.path.join(model_dir, f"{artifact.fileName}.chunkmanifest")
-        num_chunks = str(len(artifact.chunks))
-
-        if not os.path.exists(manifest_path) or open(manifest_path).read().strip() != num_chunks:
-          with open(manifest_path, "w") as f:
-            f.write(num_chunks)
-          cloudlog.info(f"Wrote chunk manifest for {artifact.fileName}: {num_chunks} chunks")
-      except Exception as e:
-        cloudlog.warning(f"Failed to write chunk manifest for {artifact.fileName}: {e}")
-
     return artifact
 
   @staticmethod
@@ -138,12 +112,12 @@ class ModelCache:
 
 class ModelFetcher:
   """Handles fetching and caching of model data from remote source"""
-  MODEL_URL = "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_v21.json"
-  MODEL_URL_USBGPU = "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_usbgpu_v22.json"
+  MODEL_URL = "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_v25.json"
+  MODEL_URL_CHESTNUT = "https://raw.githubusercontent.com/sunnypilot/sunnypilot-models/refs/heads/gh-pages/docs/driving_models_chestnut_v28.json"
 
   MODEL_SOURCES = {
     "qcom": (MODEL_URL, ""),
-    "usbgpu": (MODEL_URL_USBGPU, "_USBGPU"),
+    "chestnut": (MODEL_URL_CHESTNUT, "_Chestnut"),
   }
 
   def __init__(self, params: Params):
@@ -156,12 +130,12 @@ class ModelFetcher:
     self._refetched: set[str] = set()
     self.params.put("ModelManager_ActiveJson", {
       "qcom": self.MODEL_URL,
-      "usbgpu": self.MODEL_URL_USBGPU,
+      "chestnut": self.MODEL_URL_CHESTNUT,
     }, block=True)
 
   @staticmethod
   def active_source(chestnut_present: bool) -> str:
-    return "usbgpu" if chestnut_present else "qcom"
+    return "chestnut" if chestnut_present else "qcom"
 
   def _fetch_and_cache_models(self, source: str) -> list[custom.ModelManagerSP.ModelBundle] | None:
     """Fetches fresh model data from remote and updates cache.
@@ -200,7 +174,7 @@ class ModelFetcher:
   @staticmethod
   def _cache_matches_source(source: str, cached_data: dict) -> bool:
     bundles = cached_data.get("bundles", [])
-    if source == "usbgpu":
+    if source == "chestnut":
       return any(bundle.get("is_big") is True for bundle in bundles)
     return not any(bundle.get("is_big") is True for bundle in bundles)
 
@@ -261,14 +235,12 @@ def get_cached_bundles(params: Params, source: str) -> list[custom.ModelManagerS
 
 
 if __name__ == "__main__":
-  from openpilot.selfdrive.modeld.helpers import usbgpu_present
+  from openpilot.selfdrive.modeld.helpers import chestnut_present
   params = Params()
   model_fetcher = ModelFetcher(params)
-  bundles = model_fetcher.get_bundles_for_source(ModelFetcher.active_source(usbgpu_present()))
+  bundles = model_fetcher.get_bundles_for_source(ModelFetcher.active_source(chestnut_present()))
   for bundle in bundles:
     for model in bundle.models:
       model_overrides = {override.key: override.value for override in bundle.overrides}
       print(f"Bundle: {bundle.internalName}, Type: {model.type}, Status: {bundle.status}, Overrides: {model_overrides}")
       print(f"Artifact: {model.artifact.fileName}, Download URI: {model.artifact.downloadUri.uri}")
-      if model.artifact.chunks:
-        print(f"Contains {len(model.artifact.chunks)} chunks.")
