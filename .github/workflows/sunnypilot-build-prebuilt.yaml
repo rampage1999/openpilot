@@ -373,7 +373,7 @@ jobs:
           # device QCOM != runtime-requested CPU) - confirmed on-device.
           CACHE_SHA=d7f1025998183039ffb78f8dab774448ebea4389
           git fetch --depth 1 origin "$CACHE_SHA"
-          MODELS_DIR="${BUILD_DIR}/openpilot/selfdrive/modeld/models"
+          export MODELS_DIR="${BUILD_DIR}/openpilot/selfdrive/modeld/models"
           for f in driving_tinygrad.pkl.chunkmanifest driving_tinygrad.pkl.chunk01of02 driving_tinygrad.pkl.chunk02of02 \
                    dmonitoring_model_tinygrad.pkl.chunkmanifest dmonitoring_model_tinygrad.pkl.chunk01of01 \
                    dm_warp_1344x760_tinygrad.pkl dm_warp_1928x1208_tinygrad.pkl; do
