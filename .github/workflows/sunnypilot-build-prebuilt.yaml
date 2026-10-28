@@ -380,6 +380,29 @@ jobs:
             git show "$CACHE_SHA:$f" > "${MODELS_DIR}/$f"
           done
 
+          # scons just wrote CPU:LLVM driving/dmonitoring pkls. modeld opens those
+          # filenames, not the chunks. The August prebuilt read the chunks through
+          # open_file_chunked; that loader is gone, so concatenate the QCOM chunks
+          # over the CPU files or the comma 4 SIGILLs in modeld (no cameraOdometry,
+          # so calibration never moves, and the drive produces no model output).
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          models = Path(os.environ["MODELS_DIR"])
+          for name in ("driving_tinygrad.pkl", "dmonitoring_model_tinygrad.pkl"):
+            manifest = models / f"{name}.chunkmanifest"
+            n = int(manifest.read_text().strip())
+            tmp = models / f"{name}.assembling"
+            with tmp.open("wb") as out:
+              for i in range(n):
+                chunk = models / f"{name}.chunk{i+1:02d}of{n:02d}"
+                if not chunk.is_file() or chunk.stat().st_size == 0:
+                  raise SystemExit(f"missing QCOM chunk {chunk}")
+                out.write(chunk.read_bytes())
+            os.replace(tmp, models / name)
+            print(f"assembled QCOM {name}: {(models / name).stat().st_size} bytes")
+          PY
+
           export TG_DEVICES_JSON="${MODELS_DIR}/tg_input_devices.json"
           # GitHub already strips the run-block indent. A second sed of 10 spaces
           # pulls the deepest lines (the CPU->QCOM assignment) back to column 0.

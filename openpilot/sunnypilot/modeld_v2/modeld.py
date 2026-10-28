@@ -105,6 +105,13 @@ class ModelState(ModelStateBase):
     self.chestnut = chestnut
 
     pkl_path = _find_driving_pkl(model_bundle)
+    if pkl_path is None and not chestnut:
+      # Fresh install has no qcom bundle yet. The prebuilt ships a QCOM
+      # driving_tinygrad.pkl; use it so modeld can publish before a download.
+      from openpilot.selfdrive.modeld.helpers import modeld_pkl_path
+      vendored = modeld_pkl_path(False)
+      if vendored.is_file():
+        pkl_path = str(vendored)
     assert pkl_path is not None, f"No driving pkl found for {'chestnut' if chestnut else 'small model'} — all models must be compiled with compile_modeld.py"
     self._init_combined(pkl_path, cam_w, cam_h, model_bundle)
 
@@ -268,8 +275,8 @@ def main(demo=False):
       pass
   CHESTNUT = False
   if chestnut_available and chestnut_present():
-    from openpilot.selfdrive.modeld.chestnut_link import wait_for_stable_chestnut
-    CHESTNUT = wait_for_stable_chestnut()
+    from openpilot.selfdrive.modeld.helpers import wait_for_chestnut_link
+    CHESTNUT = wait_for_chestnut_link()
   if CHESTNUT:
     from tinygrad.runtime.ops_amd import AMDDevice
     AMDDevice.wait_timeout_ms = 3000

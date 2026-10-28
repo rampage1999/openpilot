@@ -59,6 +59,24 @@ def load_oob(path, chestnut=False):
     return load_pickle(path, out_of_band=True)
 
 def chestnut_present() -> bool:
+  """USB id match, same signal as deviceState.chestnutPresent.
+
+  The product string is the firmware version. Requiring the exact current
+  hash made the UI show a GPU (the dongle enumerates) while modeld ignored it
+  until a flash finished. The flasher still updates old firmware; detection
+  itself only cares that the chestnut is on the bus.
+  """
+  for d in USB_DEVICES_PATH.glob("*"):
+    try:
+      usb_id = (int((d / "idVendor").read_text(), 16), int((d / "idProduct").read_text(), 16))
+      if is_chestnut_usb_id(*usb_id):
+        return True
+    except Exception:
+      pass
+  return False
+
+
+def chestnut_firmware_current() -> bool:
   for d in USB_DEVICES_PATH.glob("*"):
     try:
       usb_id = (int((d / "idVendor").read_text(), 16), int((d / "idProduct").read_text(), 16))
@@ -101,6 +119,28 @@ def chestnut_model_available(params=None) -> bool:
 
 def chestnut_ready(state) -> bool:
   return state.supplyVoltage >= CHESTNUT_POWERED_VOLTAGE and not state.supplyFault and state.pcieLtssm == CHESTNUT_PCIE_READY
+
+
+def wait_for_chestnut_link(timeout: float = 3.0, stable_reads: int = 3) -> bool:
+  """Wait until hardwared's chestnutState says the PCIe link is up.
+
+  modeld must not open the ASM2464 itself here. hardwared already owns that
+  USB device; a second control transfer during startup fails the probe and
+  the big model is skipped even though the GPU is sitting on the bus.
+  """
+  import openpilot.cereal.messaging as messaging
+  sm = messaging.SubMaster(['chestnutState'])
+  deadline = time.monotonic() + timeout
+  streak = 0
+  while time.monotonic() < deadline:
+    sm.update(100)
+    if sm.alive['chestnutState'] and sm.valid['chestnutState'] and chestnut_ready(sm['chestnutState']):
+      streak += 1
+      if streak >= stable_reads:
+        return True
+    else:
+      streak = 0
+  return False
 
 
 def drop_realtime_scheduling() -> None:

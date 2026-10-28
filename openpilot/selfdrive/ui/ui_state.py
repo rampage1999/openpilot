@@ -13,7 +13,7 @@ from openpilot.selfdrive.ui.lib.prime_state import PrimeState
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.common.hardware import HARDWARE, PC
 from openpilot.common.hardware.usb import cable_connected, get_usb_state, is_chestnut_usb_id
-from openpilot.selfdrive.modeld.helpers import chestnut_compiled
+from openpilot.selfdrive.modeld.helpers import chestnut_model_available
 from openpilot.selfdrive.selfdrived.alertmanager import OFFROAD_ALERTS
 
 from openpilot.selfdrive.ui.sunnypilot.ui_state import UIStateSP, DeviceSP
@@ -97,7 +97,8 @@ class UIState(UIStateSP):
     self.navigation_enabled: bool = self.params.get_bool("NavigationEnabled")
     self.nav_destination_set: bool = self.params.get("NavDestination") is not None
     self.chestnut_present: bool = False
-    self.chestnut_compiled: bool = chestnut_compiled()
+    # Vendored big pkls are not in the prebuilt. A downloaded chestnut bundle counts too.
+    self.chestnut_compiled: bool = chestnut_model_available(self.params)
     self.chestnut_active: bool | None = None
     self.chestnut_loading: bool = False
     self.chestnut_alert: bool = False
@@ -256,6 +257,7 @@ class UIState(UIStateSP):
       else:
         self.has_longitudinal_control = self.CP.openpilotLongitudinalControl
 
+    self.chestnut_compiled = chestnut_model_available(self.params)
     self.recording_audio = self.params.get_bool("RecordAudio") and self.started
     self.is_metric = self.params.get_bool("IsMetric")
     self.initial_cruise_speed = self.params.get("InitialCruiseSpeedKph", return_default=True)

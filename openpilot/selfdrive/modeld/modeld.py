@@ -248,8 +248,8 @@ def main(demo=False):
       pass
   CHESTNUT = False
   if chestnut_available and chestnut_present():
-    from openpilot.selfdrive.modeld.chestnut_link import wait_for_stable_chestnut
-    CHESTNUT = wait_for_stable_chestnut()
+    from openpilot.selfdrive.modeld.helpers import wait_for_chestnut_link
+    CHESTNUT = wait_for_chestnut_link()
   if CHESTNUT:
     from tinygrad.runtime.ops_amd import AMDDevice
     AMDDevice.wait_timeout_ms = 3000
