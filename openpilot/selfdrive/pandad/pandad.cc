@@ -139,15 +139,14 @@ void fill_panda_state(cereal::PandaState::Builder &ps, cereal::PandaState::Panda
   ps.setInterruptLoad(health.interrupt_load_pkt / 255.0f);
   ps.setFanPower(health.fan_power);
   ps.setSafetyRxChecksInvalid((health.flags_pkt & HEALTH_FLAG_SAFETY_RX_CHECKS_INVALID) != 0U);
-  // chestnut-hw1: NMI/HardFault health flags require panda >= 20cd3584; our panda pin (5314c84d) predates them.
+  ps.setNmiReset((health.flags_pkt & HEALTH_FLAG_NMI_RESET) != 0U);
+  ps.setHardfaultReset((health.flags_pkt & HEALTH_FLAG_HARDFAULT_RESET) != 0U);
   ps.setSpiErrorCount(health.spi_error_count_pkt);
   ps.setSbu1Voltage(health.sbu1_voltage_mV / 1000.0f);
   ps.setSbu2Voltage(health.sbu2_voltage_mV / 1000.0f);
   ps.setSoundOutputLevel(health.sound_output_level_pkt);
-  // chestnut-hw1: controls_allowed_sp_pkt also postdates our pin; fall back to the single
-  // controls_allowed flag (pre-split semantics) until the fork's opendbc syncs past 43ab39f7.
-  ps.setControlsAllowedLateral((health.flags_pkt & HEALTH_FLAG_CONTROLS_ALLOWED) != 0U);
-  ps.setControlsAllowedLongitudinal((health.flags_pkt & HEALTH_FLAG_CONTROLS_ALLOWED) != 0U);
+  ps.setControlsAllowedLateral(health.controls_allowed_sp_pkt & 1);
+  ps.setControlsAllowedLongitudinal((health.controls_allowed_sp_pkt >> 1) & 1);
 }
 
 void fill_panda_can_state(cereal::PandaState::PandaCanState::Builder &cs, const can_health_t &can_health) {
