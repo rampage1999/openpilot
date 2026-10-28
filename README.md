@@ -32,8 +32,11 @@ If AGNOS versions differ, `op fork <N>` updates the OS automatically before rebo
 ## Upstream Updates
 | Upstream | Branch | Last Commit |
 |----------|--------|-------------|
-| [sunnyhaibin/sunnypilot](https://github.com/sunnyhaibin/sunnypilot) | `master` | `94ed0608e` (2026-08-24) |
-| [sunnyhaibin/opendbc](https://github.com/sunnyhaibin/opendbc) | `master` | `bfe770e38` (2026-08-24) |
+| [sunnypilot/sunnypilot](https://github.com/sunnypilot/sunnypilot) | `master` | `90a541287` (2026-10-27), sunnypilot `2026.003.000` |
+| [commaai/openpilot](https://github.com/commaai/openpilot) | base inside that sunnypilot master | `35e78a9d9` (2026-10-16), openpilot `0.11.3` |
+| [sunnypilot/opendbc](https://github.com/sunnypilot/opendbc) | pin from that sunnypilot master | `3022d336` (2026-10-26) |
+| [rampage1999/opendbc](https://github.com/rampage1999/opendbc) | `master` (HW1 fork of that pin) | `334824a4` (2026-10-28) |
+| [sunnyhaibin/panda](https://github.com/sunnyhaibin/panda) | pin from that sunnypilot master | `8a16e089` (2026-10-18) |
 | [xnor-tech/openpilot](https://github.com/xnor-tech/openpilot) | `xnor-dev` | `eae878da2` (2026-04-25) |
 | [xnor-tech/opendbc](https://github.com/xnor-tech/opendbc) | `master-xnor` | `78039539` (2026-04-25) |
 | [xnor-tech/panda](https://github.com/xnor-tech/panda) | `master-xnor` | `56920ec6` (2026-04-11) |
@@ -41,8 +44,8 @@ If AGNOS versions differ, `op fork <N>` updates the OS automatically before rebo
 ## Tesla Documentation
 | File | Purpose |
 |------|---------|
-| [`imports_to_maintain.md`](https://github.com/P6g9YHK6/opendbc/blob/master/opendbc/car/tesla/imports_to_maintain.md) | Tracks all HW1 changes from xnor-tech/StarPilot that must be preserved across upstream merges, with diff commands and merge checklist |
-| [`todo_HW1.md`](https://github.com/P6g9YHK6/opendbc/blob/master/opendbc/car/tesla/todo_HW1.md) | Comprehensive improvement TODO list for Tesla HW1 (AP1) (Model S/X 2014-16) covering missing signals, safety, longitudinal/lateral control, UI, and more |
+| [`imports_to_maintain.md`](https://github.com/rampage1999/opendbc/blob/master/opendbc/car/tesla/imports_to_maintain.md) | Tracks all HW1 changes from xnor-tech/StarPilot that must be preserved across upstream merges, with diff commands and merge checklist |
+| [`todo_HW1.md`](https://github.com/rampage1999/opendbc/blob/master/opendbc/car/tesla/todo_HW1.md) | Comprehensive improvement TODO list for Tesla HW1 (AP1) (Model S/X 2014-16) covering missing signals, safety, longitudinal/lateral control, UI, and more |
 
 ## Features
 - **Support for Tesla Legacy:** Yes
