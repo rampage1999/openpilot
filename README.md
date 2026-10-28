@@ -35,7 +35,7 @@ If AGNOS versions differ, `op fork <N>` updates the OS automatically before rebo
 | [sunnypilot/sunnypilot](https://github.com/sunnypilot/sunnypilot) | `master` | `90a541287` (2026-10-27), sunnypilot `2026.003.000` |
 | [commaai/openpilot](https://github.com/commaai/openpilot) | base inside that sunnypilot master | `35e78a9d9` (2026-10-16), openpilot `0.11.3` |
 | [sunnypilot/opendbc](https://github.com/sunnypilot/opendbc) | pin from that sunnypilot master | `3022d336` (2026-10-26) |
-| [rampage1999/opendbc](https://github.com/rampage1999/opendbc) | `master` (HW1 fork of that pin) | `c175f89d` (2026-10-28) |
+| [rampage1999/opendbc](https://github.com/rampage1999/opendbc) | `master` (HW1 fork of that pin) | `6cb5f9aa` (2026-10-28) |
 | [sunnyhaibin/panda](https://github.com/sunnyhaibin/panda) | pin from that sunnypilot master | `8a16e089` (2026-10-18) |
 | [xnor-tech/openpilot](https://github.com/xnor-tech/openpilot) | `xnor-dev` | `eae878da2` (2026-04-25) |
 | [xnor-tech/opendbc](https://github.com/xnor-tech/opendbc) | `master-xnor` | `78039539` (2026-04-25) |
