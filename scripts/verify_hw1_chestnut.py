@@ -94,6 +94,17 @@ need_text("openpilot/selfdrive/modeld/modeld.py", "chestnutGpuState", "eGPU tele
 need_text("openpilot/sunnypilot/models/fetcher.py", "MODEL_URL_CHESTNUT", "eGPU model bundle URL (upstream renamed usbgpu -> chestnut)")
 need_text("openpilot/selfdrive/modeld/helpers.py", "_patch_amdgpu_firmware_fetch", "amdgpu microcode local-firmware fetch (device fix from chestnut-ap1)")
 need_text("openpilot/common/hardware/usb.py", "0x3801", "current chestnut USB firmware ID (device fix e08806f1a)")
+need_file("openpilot/selfdrive/modeld/chestnut_link.py", "startup PCIe probe that does not re-power an up link")
+need_text("openpilot/selfdrive/modeld/chestnut_link.py", "powered_on", "PCIe power-on is sent at most once")
+need_text("openpilot/sunnypilot/modeld_v2/modeld.py", "drop_realtime_scheduling", "big-model load is not a realtime thread")
+need_text("openpilot/sunnypilot/modeld_v2/modeld.py", "big_model_ready", "big model loads in the background and hot-swaps")
+need_text("openpilot/selfdrive/modeld/modeld.py", "big_model_ready", "stock modeld uses the same non-blocking big-model load")
+need_text("openpilot/system/hardware/chestnut/monitoring.py", "ChestnutLoading", "hardwared pauses USB reads during the weight upload")
+checks += 1
+for rel in ("openpilot/sunnypilot/modeld_v2/modeld.py", "openpilot/selfdrive/modeld/modeld.py"):
+    body = _read(rel) or ""
+    if "loader.join" in body:
+        failures.append(f"[regression] {rel} still blocks on loader.join")
 # Chestnut weights are fetched at runtime by sunnypilot, NOT vendored like comma does.
 checks += 1
 if list((ROOT / "openpilot/selfdrive/modeld/models").glob("big_driving_tinygrad.pkl.chunk*")):

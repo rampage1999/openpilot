@@ -806,9 +806,40 @@ async function loadCockpit() {
   }
 }
 
+function renderGpuCard(gpu) {
+  const el = document.getElementById('card-gpu');
+  if (!el) return;
+  const body = el.querySelector('.card-body');
+  if (!gpu) {
+    body.textContent = 'No data';
+    return;
+  }
+  const c = gpu.chestnut;
+  if (!c) {
+    body.innerHTML = '<div class="row"><span class="label">eGPU</span><span class="value">Not detected</span></div>' +
+      '<div class="row"><span class="label">Onboard GPU</span><span class="value">' + (gpu.model || (gpu.present ? 'present' : 'absent')) + '</span></div>';
+    return;
+  }
+  const usb = c.usb || {};
+  const rows = [
+    ['State', c.hardware_state_label || c.hardware_state || '—'],
+    ['Loading', c.loading ? 'yes' : 'no'],
+    ['PCIe', c.pcie_link_label || (c.pcie_link_up ? 'up' : 'down')],
+    ['USB', usb.speed_mbps != null ? (usb.speed_mbps + ' Mbps' + (usb.slow ? ' (slow)' : '')) : '—'],
+    ['Temp', c.temp_c != null ? (Number(c.temp_c).toFixed(0) + ' C') : '—'],
+    ['Power', c.power_draw_w != null ? (Number(c.power_draw_w).toFixed(0) + ' W') : '—'],
+    ['Supply', c.supply_voltage != null ? (c.supply_voltage + ' mV') : '—'],
+  ];
+  let html = rows.map(([k, v]) => '<div class="row"><span class="label">' + k + '</span><span class="value">' + v + '</span></div>').join('');
+  if (c.alerts && c.alerts.length) {
+    html += c.alerts.map(a => '<div class="row"><span class="value" style="color:var(--warn)">' + (a.text || a.key) + '</span></div>').join('');
+  }
+  body.innerHTML = html;
+}
+
 async function loadDashboard() {
   try {
-    const [device, caps, status, activeModel, telemetry, diag, updateStatus, gps, calibration, network, sunnylink, storage] = await Promise.all([
+    const [device, caps, status, activeModel, telemetry, diag, updateStatus, gps, calibration, network, sunnylink, storage, gpu] = await Promise.all([
       api('/api/device'),
       api('/api/capabilities'),
       api('/api/status'),
@@ -821,6 +852,7 @@ async function loadDashboard() {
       api('/api/network', { silent: true }).catch(() => null),
       api('/api/sunnylink', { silent: true }).catch(() => null),
       api('/api/storage', { silent: true }).catch(() => null),
+      api('/api/gpu', { silent: true }).catch(() => null),
     ]);
 
     _checkWebVersion(status?.webVersion);
@@ -854,6 +886,7 @@ async function loadDashboard() {
       <div class="row"><span class="label">20 Hz</span><span class="value">${activeModel.is20hz !== undefined ? fmtBool(activeModel.is20hz) : '—'}</span></div>
     `;
 
+    renderGpuCard(gpu);
     renderTelemetryCard(telemetry);
     renderSystemCard(telemetry, status);
     renderDiagCard(diag);

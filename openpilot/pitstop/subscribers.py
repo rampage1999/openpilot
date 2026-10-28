@@ -26,6 +26,21 @@ class SubscriberMixin:
   def _device_state_loop(self):
     self._subscriber_loop('deviceState', '_device_state', 'deviceState')
 
+  def _chestnut_state_loop(self):
+    self._chestnut_state = None
+    self._chestnut_state_valid = False
+    logger.info("[LOOP] chestnutState subscriber started")
+    try:
+      sock = messaging.sub_sock('chestnutState', conflate=True, timeout=1000)
+      while self._running:
+        msg = messaging.recv_one(sock)
+        if msg is not None:
+          self._chestnut_state = msg.chestnutState
+          self._chestnut_state_valid = bool(msg.valid)
+    except Exception:
+      logger.warning("chestnutState subscriber not available")
+    logger.info("[LOOP] chestnutState subscriber stopped")
+
   def _gps_location_loop(self):
     self._subscriber_loop('gpsLocationExternal', '_gps_location', 'gpsLocationExternal')
 

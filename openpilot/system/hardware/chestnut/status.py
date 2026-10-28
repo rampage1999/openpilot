@@ -1,12 +1,12 @@
 import time
 
-from openpilot.common.hardware.usb import CHESTNUT_USB_PRODUCT, is_chestnut_usb_id
+from openpilot.common.hardware.usb import (CHESTNUT_PCIE_READY, CHESTNUT_POWERED_VOLTAGE, CHESTNUT_SLOW_USB_MBPS,
+                                            CHESTNUT_USB_PRODUCT, is_chestnut_usb_id)
 from openpilot.common.version import get_build_metadata, CHESTNUT_BRANCHES
-from openpilot.selfdrive.modeld.helpers import MODELS_DIR, chestnut_compiled
+from openpilot.selfdrive.modeld.helpers import MODELS_DIR, chestnut_model_available
 
 
 CHESTNUT_RELEASE_BRANCHES = ("release-chestnut", "release-chestnut-staging", "nightly-chestnut", "nightly-chestnut-dev")
-CHESTNUT_POWERED_VOLTAGE = 5000
 GPU_TEMP_LIMIT = 100.
 MEMORY_TEMP_LIMIT = 95.
 TEMP_HYSTERESIS = 5.
@@ -65,7 +65,7 @@ class ChestnutStatus:
       self.power_seen |= powered
 
     if not offroad and self.model_attempted and state is not None:
-      self.link_failures = self.link_failures + 1 if state.pcieLtssm != 0x78 else 0
+      self.link_failures = self.link_failures + 1 if state.pcieLtssm != CHESTNUT_PCIE_READY else 0
       self.pcie_failed |= self.link_failures >= 2 or power_lost
       self.power_lost |= power_lost
 
@@ -86,8 +86,8 @@ class ChestnutStatus:
 
     release = branch in CHESTNUT_RELEASE_BRANCHES
     missing = self.usb_failed or (offroad and release and time.monotonic() - self.started > 10. and len(detected) != 1)
-    slow_usb = offroad and len(devices) == 1 and devices[0]["speedMbps"] < 5000
-    big_model_available = (MODELS_DIR / 'big_driving_supercombo.onnx').is_file() or chestnut_compiled()
+    slow_usb = offroad and len(devices) == 1 and devices[0]["speedMbps"] < CHESTNUT_SLOW_USB_MBPS
+    big_model_available = (MODELS_DIR / 'big_driving_supercombo.onnx').is_file() or chestnut_model_available()
     current_channel = get_build_metadata().channel
     chestnut_target = CHESTNUT_BRANCHES.get(current_channel)
     chestnut_needs_switch = len(devices) == 1 and not big_model_available and chestnut_target is not None

@@ -172,6 +172,17 @@ def init_overlay() -> None:
   cloudlog.info(f"git diff output:\n{git_diff}")
 
 
+def sync_venv(target_dir: str) -> None:
+  """Provision the update candidate's own venv from its lockfile, off the driving path.
+
+  A failed sync must propagate: finalize_update must not mark a broken tree ready.
+  """
+  if shutil.which("uv") is None:
+    raise RuntimeError("uv not found on PATH; cannot provision venv for update candidate")
+  cloudlog.info(f"syncing venv for update candidate at {target_dir}")
+  run(["uv", "sync", "--frozen", "--all-extras"], target_dir)
+
+
 def finalize_update() -> None:
   """Take the current OverlayFS merged view and finalize a copy outside of
   OverlayFS, ready to be swapped-in at BASEDIR. Copy using shutil.copytree"""
@@ -187,6 +198,10 @@ def finalize_update() -> None:
 
   run(["git", "reset", "--hard"], FINALIZED)
   run(["git", "submodule", "foreach", "--recursive", "git", "reset", "--hard"], FINALIZED)
+
+  # Background staging, while the car is still on the old checkout. Failure here
+  # skips set_consistent_flag so a broken venv is never swapped in.
+  sync_venv(FINALIZED)
 
   set_consistent_flag(True)
   cloudlog.info("done finalizing overlay")
@@ -379,7 +394,9 @@ class Updater:
       ["git", "checkout", "--force", "--no-recurse-submodules", "-B", branch, "FETCH_HEAD"],
       ["git", "branch", "--set-upstream-to", f"origin/{branch}"],
       ["git", "reset", "--hard"],
-      ["git", "clean", "-xdff"],
+      # Keep the uv venv and downloaded model weights. Both are gitignored, so a
+      # plain -xdff deletes them from the overlay that finalize_update copies in.
+      ["git", "clean", "-xdff", "-e", ".venv/", "-e", "openpilot/selfdrive/modeld/models/*.pkl*"],
       ["git", "submodule", "sync"],
       ["git", "submodule", "update", "--init", "--recursive"],
       ["git", "submodule", "foreach", "--recursive", "git", "reset", "--hard"],

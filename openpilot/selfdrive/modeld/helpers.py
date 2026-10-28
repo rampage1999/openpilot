@@ -1,9 +1,11 @@
+import os
 import sys
 import time
 from pathlib import Path
 
 from openpilot.common.hardware import AGNOS
-from openpilot.common.hardware.usb import CHESTNUT_USB_PRODUCT, USB_DEVICES_PATH, is_chestnut_usb_id
+from openpilot.common.hardware.usb import (CHESTNUT_PCIE_READY, CHESTNUT_POWERED_VOLTAGE, CHESTNUT_USB_PRODUCT,
+                                            USB_DEVICES_PATH, is_chestnut_usb_id)
 
 MODELS_DIR = Path(__file__).resolve().parent / 'models'
 
@@ -79,3 +81,31 @@ def chestnut_compiled() -> bool:
   path = modeld_pkl_path(chestnut=True)
   return path.is_file() and all(
     (MODELS_DIR / f'big_driving_warp_{size}_tinygrad.pkl').is_file() for size in ('1344x760', '1928x1208'))
+
+
+def chestnut_model_available(params=None) -> bool:
+  """True when a big model can run: vendored chestnut pkls, or a downloaded bundle."""
+  if chestnut_compiled():
+    return True
+  try:
+    from openpilot.common.hardware.hw import Paths
+    from openpilot.sunnypilot.models.helpers import get_active_bundle
+    bundle = get_active_bundle(params, chestnut=True)
+    if bundle is None or not getattr(bundle, "models", None):
+      return False
+    fname = bundle.models[0].artifact.fileName
+    return bool(fname) and os.path.isfile(os.path.join(Paths.model_root(), fname))
+  except Exception:
+    return False
+
+
+def chestnut_ready(state) -> bool:
+  return state.supplyVoltage >= CHESTNUT_POWERED_VOLTAGE and not state.supplyFault and state.pcieLtssm == CHESTNUT_PCIE_READY
+
+
+def drop_realtime_scheduling() -> None:
+  """The big-model load inherits modeld's SCHED_FIFO pin and then stalls in poll().
+  The same load with normal scheduling finishes. Linux applies these per-thread for pid 0.
+  """
+  os.sched_setscheduler(0, os.SCHED_OTHER, os.sched_param(0))
+  os.sched_setaffinity(0, range(os.cpu_count() or 1))

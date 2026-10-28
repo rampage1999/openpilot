@@ -8,6 +8,10 @@ import time
 from aiohttp import web
 
 from openpilot.common.params import Params, ParamKeyFlag
+from openpilot.common.hardware.usb import (CHESTNUT_SLOW_USB_MBPS, CHESTNUT_STATE_LABELS, CHESTNUT_USABLE_STATES,
+                                            ChestnutHwState, get_chestnut_hardware_state, get_usb_state, is_chestnut_usb_id)
+from openpilot.selfdrive.modeld.helpers import chestnut_model_available
+from openpilot.system.hardware.chestnut.status import GPU_TEMP_LIMIT, MEMORY_TEMP_LIMIT, TEMP_HYSTERESIS
 from openpilot.system.version import get_build_metadata
 from openpilot.sunnypilot.sunnylink.capabilities import generate_capabilities
 from openpilot.sunnypilot.sunnylink.tools.generate_settings_schema import generate_schema
@@ -240,6 +244,186 @@ class HandlerMixin:
         "free_space_pct": float(ds.freeSpacePercent) if ds is not None else None,
         "network_type": net_type, "thermal_status": thermal,
       },
+    })
+
+  @staticmethod
+  def _sysfs_read(path):
+    try:
+      with open(path) as f:
+        return f.read().strip()
+    except Exception:
+      return None
+
+  @staticmethod
+  def _sysfs_int(path):
+    val = HandlerMixin._sysfs_read(path)
+    try:
+      return int(val.split()[0]) if val else None
+    except Exception:
+      return None
+
+  @staticmethod
+  def _chestnut_usb_state(usb_state: list[dict]):
+    firmware = [d for d in usb_state if is_chestnut_usb_id(d["vendorId"], d["productId"])]
+    if not firmware:
+      return None
+    device = next((d for d in firmware if d["speedMbps"]), firmware[0])
+    speed = device["speedMbps"]
+    return {
+      "present": True,
+      "speed_mbps": speed,
+      "slow": len(firmware) == 1 and speed < CHESTNUT_SLOW_USB_MBPS,
+      "usb3_lane": device.get("usb3Lane", "unknown"),
+      "link_error_count": device.get("linkErrorCount", 0),
+      "product": device.get("product", ""),
+    }
+
+  @staticmethod
+  def _chestnut_temp_level(temp: float, limit: float, overheated_latched: bool) -> str:
+    eff_limit = limit - (TEMP_HYSTERESIS if overheated_latched else 0.)
+    if temp >= eff_limit:
+      return "critical"
+    if temp >= eff_limit - 10.:
+      return "warn"
+    return "ok"
+
+  _CHESTNUT_ALERT_KEYS = (
+    "Offroad_ChestnutBranch", "Offroad_ChestnutNotDetected", "Offroad_ChestnutOverheated",
+    "Offroad_ChestnutPcieUnavailable", "Offroad_ChestnutUncompiled",
+    "Offroad_ChestnutUpdateFailed", "Offroad_ChestnutUsbSlow", "Offroad_ChestnutModelError",
+  )
+
+  def _chestnut_offroad_alerts(self) -> list[dict]:
+    alerts = []
+    for key in self._CHESTNUT_ALERT_KEYS:
+      alert = self.params.get(key)
+      if not isinstance(alert, dict):
+        continue
+      text = alert.get("text", "")
+      extra = alert.get("extra") or ""
+      alerts.append({"key": key, "text": text.replace("%1", extra) if extra else text, "severity": alert.get("severity", 0)})
+    return alerts
+
+  async def handle_gpu(self, request):
+    ds = self._device_state
+    kgsl = "/sys/class/kgsl/kgsl-3d0"
+    present = os.path.exists("/dev/dri/renderD128") or os.path.exists("/dev/kgsl-3d0") or os.path.isdir(kgsl)
+
+    model = self._sysfs_read(f"{kgsl}/gpu_model")
+    clock_mhz = self._sysfs_int(f"{kgsl}/clock_mhz")
+    max_clock_mhz = self._sysfs_int(f"{kgsl}/max_clock_mhz")
+    min_clock_mhz = self._sysfs_int(f"{kgsl}/min_clock_mhz")
+    busy_percent = self._sysfs_int(f"{kgsl}/gpu_busy_percentage")
+    default_pwrlevel = self._sysfs_int(f"{kgsl}/default_pwrlevel")
+    min_pwrlevel = self._sysfs_int(f"{kgsl}/min_pwrlevel")
+    max_pwrlevel = self._sysfs_int(f"{kgsl}/max_pwrlevel")
+    num_pwrlevels = self._sysfs_int(f"{kgsl}/num_pwrlevels")
+    thermal_pwrlevel = self._sysfs_int(f"{kgsl}/thermal_pwrlevel")
+    reset_count = self._sysfs_int(f"{kgsl}/reset_count")
+    governor = self._sysfs_read(f"{kgsl}/devfreq/governor")
+    throttling = self._sysfs_int(f"{kgsl}/throttling")
+
+    gpu_busy = None
+    raw_busy = self._sysfs_read(f"{kgsl}/gpubusy")
+    if raw_busy:
+      try:
+        used, total = raw_busy.split()
+        gpu_busy = {"used": int(used), "total": int(total)}
+      except Exception:
+        pass
+
+    clocks = []
+    avail_freqs = self._sysfs_read(f"{kgsl}/gpu_available_frequencies")
+    clock_stats = self._sysfs_read(f"{kgsl}/gpu_clock_stats")
+    if avail_freqs and clock_stats:
+      try:
+        freqs = [int(x) for x in avail_freqs.split()]
+        times = [int(x) for x in clock_stats.split()]
+        total_ns = sum(times)
+        for hz, ns in zip(freqs, times, strict=False):
+          clocks.append({
+            "mhz": hz // 1000000,
+            "time_ns": ns,
+            "pct": round(100.0 * ns / total_ns, 2) if total_ns else 0.0,
+          })
+      except Exception:
+        clocks = []
+
+    gpu_temps = list(ds.gpuTempC) if ds is not None and ds.gpuTempC else []
+    max_gpu_clock = max((c["mhz"] for c in clocks), default=0)
+    try:
+      usb_state = get_usb_state()
+    except Exception:
+      usb_state = []
+    cs = getattr(self, "_chestnut_state", None)
+    hw = get_chestnut_hardware_state(usb_state, cs, chestnut_model_available(self.params), self.params.get_bool("ChestnutActive"))
+    alerts = self._chestnut_offroad_alerts()
+    overheated_latched = any(a["key"] == "Offroad_ChestnutOverheated" for a in alerts)
+
+    chestnut = None
+    chestnut_usb = self._chestnut_usb_state(usb_state)
+    if chestnut_usb is not None or hw.state != ChestnutHwState.ABSENT:
+      chestnut = {
+        "hardware_state": hw.state.value,
+        "hardware_state_label": CHESTNUT_STATE_LABELS[hw.state],
+        "ready": hw.state in CHESTNUT_USABLE_STATES,
+        "powered": hw.powered,
+        "pcie_link_up": hw.pcie_link_up,
+        "pcie_link_label": hw.pcie_label,
+        "loading": self.params.get_bool("ChestnutLoading"),
+        "model_error": any(a["key"] == "Offroad_ChestnutModelError" for a in alerts),
+      }
+      if chestnut_usb is not None:
+        chestnut["usb"] = chestnut_usb
+      if cs is not None:
+        chestnut.update({
+          "valid": bool(getattr(self, "_chestnut_state_valid", False)),
+          "temp_c": float(cs.tempC),
+          "memory_temp_c": float(cs.memoryTempC),
+          "temp_level": self._chestnut_temp_level(float(cs.tempC), GPU_TEMP_LIMIT, overheated_latched),
+          "memory_temp_level": self._chestnut_temp_level(float(cs.memoryTempC), MEMORY_TEMP_LIMIT, overheated_latched),
+          "power_draw_w": float(cs.powerDrawW),
+          "power_limit_w": float(cs.powerLimitW),
+          "gpu_usage_percent": int(cs.gpuUsagePercent),
+          "gpu_clock_mhz": int(cs.gpuClockMhz),
+          "fan_speed_rpm": int(cs.fanSpeedRpm),
+          "pcie_ltssm": int(cs.pcieLtssm),
+          "supply_voltage": int(cs.supplyVoltage),
+          "supply_current": int(cs.supplyCurrent),
+          "supply_fault": bool(cs.supplyFault),
+        })
+      if alerts:
+        chestnut["alerts"] = alerts
+
+    return web.json_response({
+      "present": present,
+      "model": model,
+      "status": {
+        "present": present,
+        "active": bool(busy_percent) if busy_percent is not None else None,
+        "max_mode": bool(max_clock_mhz and max_clock_mhz >= max_gpu_clock),
+        "throttled": bool(thermal_pwrlevel) if thermal_pwrlevel is not None else None,
+        "thermal_pwrlevel": thermal_pwrlevel,
+      },
+      "clock": {
+        "current_mhz": clock_mhz,
+        "min_mhz": min_clock_mhz,
+        "max_mhz": max_clock_mhz,
+        "governor": governor,
+      },
+      "busy_percent": busy_percent,
+      "busy": gpu_busy,
+      "power": {
+        "default_pwrlevel": default_pwrlevel,
+        "min_pwrlevel": min_pwrlevel,
+        "max_pwrlevel": max_pwrlevel,
+        "num_pwrlevels": num_pwrlevels,
+        "reset_count": reset_count,
+        "throttling_raw": throttling,
+      },
+      "clocks": clocks,
+      "temps_c": gpu_temps,
+      "chestnut": chestnut,
     })
 
   async def handle_status(self, request):

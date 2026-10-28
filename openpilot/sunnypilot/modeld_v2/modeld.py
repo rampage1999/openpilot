@@ -18,7 +18,7 @@ from setproctitle import setproctitle
 
 import openpilot.cereal.messaging as messaging
 from openpilot.common.hardware import COMMA_HARDWARE
-from openpilot.selfdrive.modeld.helpers import chestnut_present, wait_for_chestnut
+from openpilot.selfdrive.modeld.helpers import chestnut_present, drop_realtime_scheduling, wait_for_chestnut
 from openpilot.cereal import log
 from opendbc.car.structs import car
 from openpilot.cereal.services import SERVICE_LIST
@@ -259,14 +259,27 @@ def main(demo=False):
   cloudlog.bind(daemon=PROCESS_NAME)
   setproctitle(PROCESS_NAME)
 
-  CHESTNUT = _find_driving_pkl(get_active_bundle(chestnut=True)) is not None and (chestnut_present() or cable_connected())
+  chestnut_bundle = _find_driving_pkl(get_active_bundle(chestnut=True)) is not None
+  chestnut_available = chestnut_bundle and (chestnut_present() or cable_connected())
+  if chestnut_available and not chestnut_present():
+    try:
+      wait_for_chestnut(timeout=3.)
+    except TimeoutError:
+      pass
+  CHESTNUT = False
+  if chestnut_available and chestnut_present():
+    from openpilot.selfdrive.modeld.chestnut_link import wait_for_stable_chestnut
+    CHESTNUT = wait_for_stable_chestnut()
   if CHESTNUT:
     from tinygrad.runtime.ops_amd import AMDDevice
     AMDDevice.wait_timeout_ms = 3000
 
   params = Params()
   params.put_bool("ChestnutLoading", CHESTNUT)
-  params.remove("ChestnutActive")
+  if chestnut_available and not CHESTNUT:
+    params.put_bool("ChestnutActive", False)
+  else:
+    params.remove("ChestnutActive")
 
   gc.disable()
 
@@ -296,36 +309,35 @@ def main(demo=False):
   cloudlog.warning("loading model")
   st = time.monotonic()
 
-  model = None
+  # Small model first so modeld publishes immediately. Joining the big-model
+  # thread for BIG_MODEL_TIMEOUT used to block every modelV2 for up to 60s when
+  # the USB weight copy hung.
+  small_model = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=False)
+  model = small_model
+  cloudlog.warning(f"small model loaded in {time.monotonic() - st:.1f}s, modeld starting")
+
+  big_model_ready = threading.Event()
+  big_model_holder: list = [None]
+  load_big_start = time.monotonic()
+  big_model_checked = not CHESTNUT
+  big_model_timed_out = False
   if CHESTNUT:
-    big_model = None
     def load_big():
-      nonlocal big_model
       try:
-        wait_for_chestnut()
+        drop_realtime_scheduling()
+      except OSError:
+        cloudlog.exception("failed to drop realtime scheduling for big model load")
+      try:
         m = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=True)
+        cloudlog.warning(f"big model constructed in {time.monotonic() - load_big_start:.1f}s, warming up")
         m.warmup()
-        big_model = m
+        big_model_holder[0] = m
+        cloudlog.warning(f"big model loaded in {time.monotonic() - load_big_start:.1f}s")
       except Exception:
         cloudlog.exception("chestnut load failed")
-    loader = threading.Thread(target=load_big, daemon=True)
-    loader.start()
-    loader.join(BIG_MODEL_TIMEOUT)
-    model = big_model
-    if model is None and not params.get_bool("ChestnutRetry"):
-      # a crank can cut the chestnut power during the load, retry once with an onroad cycle
-      cloudlog.error("big model load failed, cycling onroad to retry")
-      params.put_bool("ChestnutRetry", True)
-      params.put_bool("OnroadCycleRequested", True)
-    else:
-      params.put_bool("ChestnutActive", model is not None)
-
-  small_model = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=False) if model is None or CHESTNUT else None
-  if model is None:
-    model = small_model
-  params.put_bool("ChestnutLoading", False)
-  assert model is not None
-  cloudlog.warning(f"models loaded in {time.monotonic() - st:.1f}s, modeld starting")
+      finally:
+        big_model_ready.set()
+    threading.Thread(target=load_big, daemon=True).start()
 
   config_realtime_process(7, 54)
 
@@ -336,7 +348,9 @@ def main(demo=False):
                   "carControl", "controlsState", "lateralDelay"])
 
   publish_state = PublishState()
-  chestnut_state = ChestnutGpuState(pm, model.chestnut) if CHESTNUT else None
+  # big stays false until the background load is adopted. Telemetry is held until
+  # that thread finishes: send() shares the USB link with the weight copy-in.
+  chestnut_state = ChestnutGpuState(pm, False) if CHESTNUT else None
 
   # setup filter to track dropped frames
   frame_dropped_filter = FirstOrderFilter(0., 10., 1. / model.constants.MODEL_FREQ)
@@ -400,6 +414,21 @@ def main(demo=False):
       buf_extra = buf_main
       meta_extra = meta_main
 
+    if not big_model_checked:
+      if big_model_ready.is_set():
+        big_model_checked = True
+        big = big_model_holder[0]
+        if big is not None:
+          model = big
+          chestnut_state.big = True
+          params.put_bool("ChestnutActive", True)
+        else:
+          params.put_bool("ChestnutActive", False)
+        params.put_bool("ChestnutLoading", False)
+      elif not big_model_timed_out and time.monotonic() - load_big_start > BIG_MODEL_TIMEOUT:
+        big_model_timed_out = True
+        cloudlog.error(f"big model still loading after {BIG_MODEL_TIMEOUT}s; driving on small model, will adopt big if it finishes")
+
     sm.update(0)
     desire = DH.desire
     is_rhd = sm["driverMonitoringState"].isRHD
@@ -457,7 +486,9 @@ def main(demo=False):
 
     mt1 = time.perf_counter()
     try:
-      send_chestnut = (chestnut_state is not None and
+      # Hold GPU telemetry until the background load finishes. send() reads the
+      # AMD device over the same USB link the weight copy-in is using.
+      send_chestnut = (chestnut_state is not None and big_model_ready.is_set() and
                        run_count % round(model.constants.MODEL_FREQ / SERVICE_LIST['chestnutGpuState'].frequency) == 0)
       model_output = model.run(bufs, transforms, inputs, chestnut_state.send if send_chestnut else None)
     except Exception:

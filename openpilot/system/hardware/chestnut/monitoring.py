@@ -5,6 +5,7 @@ import usb1
 import openpilot.cereal.messaging as messaging
 from openpilot.cereal.services import SERVICE_LIST
 from openpilot.common.hardware.usb import CHESTNUT_USB_PRODUCT, get_usb_state, is_chestnut_usb_id
+from openpilot.common.params import Params
 
 
 def read_chestnut_state(handle, gpu_state=None):
@@ -26,10 +27,16 @@ def read_chestnut_state(handle, gpu_state=None):
 def chestnut_state_thread(end_event):
   pm = messaging.PubMaster(['chestnutState'])
   sm = messaging.SubMaster(['chestnutGpuState'])
+  params = Params()
   with usb1.USBContext() as context:
     handle = None
     try:
       while not end_event.is_set():
+        # modeld's big-model weight copy uses this same USB device and is not
+        # safe to interleave with these control reads. Pause until the load ends.
+        if params.get_bool("ChestnutLoading"):
+          end_event.wait(0.2)
+          continue
         if handle is None:
           devices = [d for d in get_usb_state() if is_chestnut_usb_id(d['vendorId'], d['productId']) and
                      d['product'] == CHESTNUT_USB_PRODUCT]
