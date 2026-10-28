@@ -94,6 +94,7 @@ need_text("openpilot/selfdrive/modeld/modeld.py", "chestnutGpuState", "eGPU tele
 need_text("openpilot/sunnypilot/models/fetcher.py", "MODEL_URL_CHESTNUT", "eGPU model bundle URL (upstream renamed usbgpu -> chestnut)")
 need_text("openpilot/selfdrive/modeld/helpers.py", "_patch_amdgpu_firmware_fetch", "amdgpu microcode local-firmware fetch (device fix from chestnut-ap1)")
 need_text("openpilot/common/hardware/usb.py", "0x3801", "current chestnut USB firmware ID (device fix e08806f1a)")
+need_text("openpilot/selfdrive/pandad/pandad.cc", "chestnut-hw1: NMI/HardFault health flags", "pandad health-API compat (panda pin 5314c84d predates NMI flags + controls_allowed_sp_pkt)")
 # Chestnut weights are fetched at runtime by sunnypilot, NOT vendored like comma does.
 checks += 1
 if list((ROOT / "openpilot/selfdrive/modeld/models").glob("big_driving_tinygrad.pkl.chunk*")):
