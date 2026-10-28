@@ -381,7 +381,9 @@ jobs:
           done
 
           export TG_DEVICES_JSON="${MODELS_DIR}/tg_input_devices.json"
-          sed 's/^          //' <<'PYEOF' | python3 -
+          # GitHub already strips the run-block indent. A second sed of 10 spaces
+          # pulls the deepest lines (the CPU->QCOM assignment) back to column 0.
+          python3 - <<'PYEOF'
           import json
           import os
 
