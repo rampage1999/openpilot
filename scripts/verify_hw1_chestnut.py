@@ -98,6 +98,10 @@ need_file("openpilot/selfdrive/modeld/chestnut_link.py", "startup PCIe probe tha
 need_text("openpilot/selfdrive/modeld/chestnut_link.py", "powered_on", "PCIe power-on is sent at most once")
 need_text("openpilot/sunnypilot/modeld_v2/modeld.py", "drop_realtime_scheduling", "big-model load is not a realtime thread")
 need_text("openpilot/sunnypilot/modeld_v2/modeld.py", "big_model_ready", "big model loads in the background and hot-swaps")
+need_text("openpilot/sunnypilot/modeld_v2/modeld.py", "prepare_chestnut_runtime", "eGPU load applies the local amdgpu firmware patch")
+need_text("openpilot/sunnypilot/modeld_v2/modeld.py", "load_big_model_guarded", "big model load is fenced from the small model")
+need_text("openpilot/sunnypilot/modeld_v2/chestnut_load.py", "ChestnutBigFailed", "a failed big model is not retried until the next ignition")
+need_file("tools/chestnut_diag.py", "on-device chestnut diagnostic")
 need_text("openpilot/selfdrive/modeld/modeld.py", "big_model_ready", "stock modeld uses the same non-blocking big-model load")
 need_text("openpilot/system/hardware/chestnut/monitoring.py", "ChestnutLoading", "hardwared pauses USB reads during the weight upload")
 checks += 1
