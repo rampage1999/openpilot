@@ -466,8 +466,12 @@ def main(demo=False):
       if not model.chestnut:
         raise
       # fallback to small model
-      cloudlog.exception("big model failed, fall back to small")
-      params.put_bool("ChestnutActive", False)
+      cloudlog.exception("chestnut big model failed, falling back to the small model")
+      try:
+        from openpilot.sunnypilot.modeld_v2.chestnut_load import note_big_model_failure
+        note_big_model_failure(params)
+      except Exception:
+        params.put_bool("ChestnutActive", False)
       assert small_model is not None
       model = small_model
       if chestnut_state is not None:
@@ -478,37 +482,51 @@ def main(demo=False):
     model_execution_time = mt2 - mt1
 
     if model_output is not None:
-      modelv2_send = messaging.new_message('modelV2')
-      drivingdata_send = messaging.new_message('drivingModelData')
-      posenet_send = messaging.new_message('cameraOdometry')
-      mdv2sp_send = messaging.new_message('modelDataV2SP')
+      try:
+        modelv2_send = messaging.new_message('modelV2')
+        drivingdata_send = messaging.new_message('drivingModelData')
+        posenet_send = messaging.new_message('cameraOdometry')
+        mdv2sp_send = messaging.new_message('modelDataV2SP')
 
-      if not sm['carControl'].latActive:
-        prev_action.desiredCurvature = sm['controlsState'].curvature
-      action = get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego)
-      prev_action = action
-      fill_model_msg(modelv2_send, model_output, action,
-                     publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
-                     frame_drop_ratio, meta_main.timestamp_eof, model_execution_time, extrinsics_calibration_seen)
-      modelv2_send.modelV2.big = model.chestnut
+        if not sm['carControl'].latActive:
+          prev_action.desiredCurvature = sm['controlsState'].curvature
+        action = get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego)
+        prev_action = action
+        fill_model_msg(modelv2_send, model_output, action,
+                       publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
+                       frame_drop_ratio, meta_main.timestamp_eof, model_execution_time, extrinsics_calibration_seen)
+        modelv2_send.modelV2.big = model.chestnut
 
-      desire_state = modelv2_send.modelV2.meta.desireState
-      l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
-      r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
-      lane_change_prob = l_lane_change_prob + r_lane_change_prob
-      left_edge, right_edge = RELC.update_and_fill(modelv2_send.modelV2, mdv2sp_send.modelDataV2SP, v_ego)
-      DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, left_edge, right_edge)
-      modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
-      modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
-      mdv2sp_send.valid = modelv2_send.valid
-      mdv2sp_send.modelDataV2SP.laneTurnDirection = DH.lane_turn_direction
+        desire_state = modelv2_send.modelV2.meta.desireState
+        l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
+        r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
+        lane_change_prob = l_lane_change_prob + r_lane_change_prob
+        left_edge, right_edge = RELC.update_and_fill(modelv2_send.modelV2, mdv2sp_send.modelDataV2SP, v_ego)
+        DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, left_edge, right_edge)
+        modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
+        modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
+        mdv2sp_send.valid = modelv2_send.valid
+        mdv2sp_send.modelDataV2SP.laneTurnDirection = DH.lane_turn_direction
 
-      fill_driving_model_data(drivingdata_send, modelv2_send)
-      fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, extrinsics_calibration_seen)
-      pm.send('modelV2', modelv2_send)
-      pm.send('drivingModelData', drivingdata_send)
-      pm.send('cameraOdometry', posenet_send)
-      pm.send('modelDataV2SP', mdv2sp_send)
+        fill_driving_model_data(drivingdata_send, modelv2_send)
+        fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, extrinsics_calibration_seen)
+        pm.send('modelV2', modelv2_send)
+        pm.send('drivingModelData', drivingdata_send)
+        pm.send('cameraOdometry', posenet_send)
+        pm.send('modelDataV2SP', mdv2sp_send)
+      except Exception:
+        if not model.chestnut:
+          raise
+        cloudlog.exception("chestnut big model publish failed, falling back to the small model")
+        try:
+          from openpilot.sunnypilot.modeld_v2.chestnut_load import note_big_model_failure
+          note_big_model_failure(params)
+        except Exception:
+          params.put_bool("ChestnutActive", False)
+        model = small_model
+        if chestnut_state is not None:
+          chestnut_state.big = False
+        run_count = 0
     last_vipc_frame_id = meta_main.frame_id
 
 if __name__ == "__main__":

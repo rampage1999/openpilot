@@ -7,6 +7,7 @@ See the LICENSE.md file in the root directory for more details.
 """
 
 from collections.abc import Callable
+import faulthandler
 import gc
 import os
 os.environ['GMMU'] = '0'
@@ -46,6 +47,9 @@ from openpilot.sunnypilot.livedelay.helpers import get_lat_delay
 from openpilot.sunnypilot.modeld_v2.modeld_base import ModelStateBase
 from openpilot.sunnypilot.modeld_v2.helpers import load_model
 from openpilot.sunnypilot.modeld_v2.frame_fusion import fused_with_warp
+from openpilot.sunnypilot.modeld_v2.chestnut_load import (
+  BIG_MODEL_STABLE_FRAMES, load_big_model_guarded, memory_line, note_big_model_failure,
+  prepare_chestnut_runtime)
 from openpilot.sunnypilot.modeld_v2.model_adapters import get_model_adapter
 from openpilot.sunnypilot.models.helpers import get_active_bundle
 from openpilot.sunnypilot.selfdrive.controls.lib.relc import RoadEdgeLaneChangeController
@@ -89,6 +93,11 @@ class ModelState(ModelStateBase):
 
   def __init__(self, cam_w: int, cam_h: int, chestnut: bool = False):
     ModelStateBase.__init__(self)
+    # Before the first AMD buffer. The QCOM small model does not need amdgpu
+    # microcode; the USB eGPU does, and tinygrad will not read AGNOS's zstd
+    # firmware unless this patch is installed.
+    if chestnut:
+      prepare_chestnut_runtime()
 
     env_pkl = os.environ.get('COMBINED_MODEL_PKL')
     if env_pkl and os.path.exists(env_pkl):
@@ -189,7 +198,7 @@ class ModelState(ModelStateBase):
       self.numpy_inputs['big_tfm'][:, :] = transforms[self._wide_key].reshape(3, 3)
 
     raw_outputs = self.adapter.run()
-    if self.chestnut and (err := Device[self.DEV].error_state.host.view(fmt='q')[0]):
+    if self.chestnut and (err := self._chestnut_gpu_error()):
       raise RuntimeError(f"chestnut failed with {err}")
 
     if after_enqueue is not None:
@@ -234,6 +243,23 @@ class ModelState(ModelStateBase):
 
     return outputs
 
+  def _chestnut_gpu_error(self) -> int:
+    # Read the flag on the device the model actually ran on. Indexing
+    # Device['AMD'] opens a context, and doing that under a different name
+    # than the one tinygrad already opened for the USB bridge aborts modeld.
+    try:
+      dev_name = self.DEV
+      outputs = getattr(self.adapter, "outputs", None)
+      if isinstance(outputs, dict) and outputs.get("outputs") is not None:
+        dev_name = outputs["outputs"].device
+      err_buf = getattr(Device[dev_name], "error_state", None)
+      if err_buf is None:
+        return 0
+      return int(err_buf.host.view(fmt="q")[0])
+    except Exception as exc:
+      cloudlog.exception("chestnut big model: could not read GPU error_state")
+      raise RuntimeError(f"chestnut GPU error_state unreadable: {exc}") from exc
+
   def get_action_from_model(self, model_output: dict[str, np.ndarray], prev_action: log.ModelDataV2.Action,
                             lat_action_t: float, long_action_t: float, v_ego: float) -> log.ModelDataV2.Action:
     if 'action' not in model_output:
@@ -262,6 +288,11 @@ class ModelState(ModelStateBase):
 
 def main(demo=False):
   cloudlog.warning("modeld init")
+  # SIGABRT/SIGSEGV from tinygrad then prints a Python traceback on stderr,
+  # which is the modeld pane inside `tmux a`. SIGKILL from the OOM killer
+  # cannot be caught; the load probe is a separate process so that kill hits
+  # the probe first.
+  faulthandler.enable(all_threads=True)
 
   cloudlog.bind(daemon=PROCESS_NAME)
   setproctitle(PROCESS_NAME)
@@ -282,11 +313,18 @@ def main(demo=False):
     AMDDevice.wait_timeout_ms = 3000
 
   params = Params()
-  params.put_bool("ChestnutLoading", CHESTNUT)
-  if chestnut_available and not CHESTNUT:
+  from openpilot.sunnypilot.modeld_v2.chestnut_load import big_model_already_failed
+  if CHESTNUT and big_model_already_failed(params):
+    cloudlog.error("chestnut big model: ChestnutBigFailed is set, driving the small model only. Restart the car to retry the eGPU.")
+    CHESTNUT = False
     params.put_bool("ChestnutActive", False)
+    params.put_bool("ChestnutLoading", False)
   else:
-    params.remove("ChestnutActive")
+    params.put_bool("ChestnutLoading", CHESTNUT)
+    if chestnut_available and not CHESTNUT:
+      params.put_bool("ChestnutActive", False)
+    else:
+      params.remove("ChestnutActive")
 
   gc.disable()
 
@@ -335,13 +373,14 @@ def main(demo=False):
       except OSError:
         cloudlog.exception("failed to drop realtime scheduling for big model load")
       try:
-        m = ModelState(cam_w=vipc_client_main.width, cam_h=vipc_client_main.height, chestnut=True)
-        cloudlog.warning(f"big model constructed in {time.monotonic() - load_big_start:.1f}s, warming up")
-        m.warmup()
-        big_model_holder[0] = m
-        cloudlog.warning(f"big model loaded in {time.monotonic() - load_big_start:.1f}s")
+        big_model_holder[0] = load_big_model_guarded(vipc_client_main.width, vipc_client_main.height)
+        if big_model_holder[0] is None:
+          cloudlog.error("chestnut big model: not adopted, small model keeps driving. %s", memory_line())
+        else:
+          cloudlog.warning(f"big model ready in {time.monotonic() - load_big_start:.1f}s")
       except Exception:
-        cloudlog.exception("chestnut load failed")
+        cloudlog.exception("chestnut big model: guarded load raised. Staying on the small model.")
+        big_model_holder[0] = None
       finally:
         big_model_ready.set()
     threading.Thread(target=load_big, daemon=True).start()
@@ -364,6 +403,7 @@ def main(demo=False):
   frame_id = 0
   last_vipc_frame_id = 0
   run_count = 0
+  big_ok_frames = 0
 
   model_transform_main = np.zeros((3, 3), dtype=np.float32)
   model_transform_extra = np.zeros((3, 3), dtype=np.float32)
@@ -492,59 +532,71 @@ def main(demo=False):
       inputs['action_t'] = np.array([lat_action_t, long_action_t], dtype=np.float32)
 
     mt1 = time.perf_counter()
+    model_execution_time = 0.
     try:
       # Hold GPU telemetry until the background load finishes. send() reads the
       # AMD device over the same USB link the weight copy-in is using.
       send_chestnut = (chestnut_state is not None and big_model_ready.is_set() and
                        run_count % round(model.constants.MODEL_FREQ / SERVICE_LIST['chestnutGpuState'].frequency) == 0)
       model_output = model.run(bufs, transforms, inputs, chestnut_state.send if send_chestnut else None)
+      model_execution_time = time.perf_counter() - mt1
+      if model_output is not None:
+        modelv2_send = messaging.new_message('modelV2')
+        drivingdata_send = messaging.new_message('drivingModelData')
+        posenet_send = messaging.new_message('cameraOdometry')
+        mdv2sp_send = messaging.new_message('modelDataV2SP')
+
+        if not sm['carControl'].latActive:
+          prev_action.desiredCurvature = sm['controlsState'].curvature
+        action = model.get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego)
+        prev_action = action
+        fill_model_msg(drivingdata_send, modelv2_send, model_output, action,
+                       publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
+                       frame_drop_ratio, meta_main.timestamp_eof, model_execution_time, live_calib_seen, meta_constants)
+        modelv2_send.modelV2.big = model.chestnut
+
+        desire_state = modelv2_send.modelV2.meta.desireState
+        l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
+        r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
+        lane_change_prob = l_lane_change_prob + r_lane_change_prob
+        left_edge, right_edge = RELC.update_and_fill(modelv2_send.modelV2, mdv2sp_send.modelDataV2SP, v_ego)
+        DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, left_edge, right_edge)
+        modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
+        modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
+        mdv2sp_send.valid = modelv2_send.valid
+        mdv2sp_send.modelDataV2SP.laneTurnDirection = DH.lane_turn_direction
+        drivingdata_send.drivingModelData.meta.laneChangeState = DH.lane_change_state
+        drivingdata_send.drivingModelData.meta.laneChangeDirection = DH.lane_change_direction
+
+        fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, live_calib_seen)
+        pm.send('modelV2', modelv2_send)
+        pm.send('drivingModelData', drivingdata_send)
+        pm.send('cameraOdometry', posenet_send)
+        pm.send('modelDataV2SP', mdv2sp_send)
+        if model.chestnut:
+          big_ok_frames += 1
     except Exception:
       if not model.chestnut:
         raise
-      cloudlog.exception("big model failed, fall back to small")
-      params.put_bool("ChestnutActive", False)
-      assert small_model is not None
+      # run(), the action decode, and the publish are all inside this try.
+      # A failure here used to kill modeld and take the small model with it.
+      cloudlog.exception("chestnut big model failed, falling back to the small model. %s", memory_line())
+      note_big_model_failure(params)
+      big_model_holder[0] = None
       model = small_model
       if chestnut_state is not None:
         chestnut_state.big = False
       run_count = 0
-      model_output = None
-    mt2 = time.perf_counter()
-    model_execution_time = mt2 - mt1
-
-    if model_output is not None:
-      modelv2_send = messaging.new_message('modelV2')
-      drivingdata_send = messaging.new_message('drivingModelData')
-      posenet_send = messaging.new_message('cameraOdometry')
-      mdv2sp_send = messaging.new_message('modelDataV2SP')
-
-      if not sm['carControl'].latActive:
-        prev_action.desiredCurvature = sm['controlsState'].curvature
-      action = model.get_action_from_model(model_output, prev_action, lat_action_t, long_action_t, v_ego)
-      prev_action = action
-      fill_model_msg(drivingdata_send, modelv2_send, model_output, action,
-                     publish_state, meta_main.frame_id, meta_extra.frame_id, frame_id,
-                     frame_drop_ratio, meta_main.timestamp_eof, model_execution_time, live_calib_seen, meta_constants)
-      modelv2_send.modelV2.big = model.chestnut
-
-      desire_state = modelv2_send.modelV2.meta.desireState
-      l_lane_change_prob = desire_state[log.Desire.laneChangeLeft]
-      r_lane_change_prob = desire_state[log.Desire.laneChangeRight]
-      lane_change_prob = l_lane_change_prob + r_lane_change_prob
-      left_edge, right_edge = RELC.update_and_fill(modelv2_send.modelV2, mdv2sp_send.modelDataV2SP, v_ego)
-      DH.update(sm['carState'], sm['carControl'].latActive, lane_change_prob, left_edge, right_edge)
-      modelv2_send.modelV2.meta.laneChangeState = DH.lane_change_state
-      modelv2_send.modelV2.meta.laneChangeDirection = DH.lane_change_direction
-      mdv2sp_send.valid = modelv2_send.valid
-      mdv2sp_send.modelDataV2SP.laneTurnDirection = DH.lane_turn_direction
-      drivingdata_send.drivingModelData.meta.laneChangeState = DH.lane_change_state
-      drivingdata_send.drivingModelData.meta.laneChangeDirection = DH.lane_change_direction
-
-      fill_pose_msg(posenet_send, model_output, meta_main.frame_id, vipc_dropped_frames, meta_main.timestamp_eof, live_calib_seen)
-      pm.send('modelV2', modelv2_send)
-      pm.send('drivingModelData', drivingdata_send)
-      pm.send('cameraOdometry', posenet_send)
-      pm.send('modelDataV2SP', mdv2sp_send)
+      big_ok_frames = 0
+      gc.collect()
+    else:
+      if big_ok_frames == BIG_MODEL_STABLE_FRAMES and model.chestnut:
+        try:
+          params.put_bool("ChestnutBigFailed", False, block=True)
+          cloudlog.warning("chestnut big model: stable for %s frames, clearing ChestnutBigFailed", BIG_MODEL_STABLE_FRAMES)
+          big_ok_frames += 1  # only log the clear once
+        except Exception:
+          cloudlog.exception("chestnut big model: could not clear ChestnutBigFailed")
     last_vipc_frame_id = meta_main.frame_id
 
 if __name__ == "__main__":
