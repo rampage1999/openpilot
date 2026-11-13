@@ -16,6 +16,28 @@ First, check out this list of items you'll need to [get started](https://communi
 ## Installation
 Next, refer to the sunnypilot community forum for [installation instructions](https://community.sunnypilot.ai/t/read-before-installing-sunnypilot/254), as well as a complete list of [Recommended Branch Installations](https://community.sunnypilot.ai/t/recommended-branch-installations/235).
 
+## 🚗 Tesla Model S / Model X (HW1) support
+
+This branch adds support for first-generation Autopilot (HW1) Tesla Model S (2014-16) and Model X (2014-16) on top of sunnypilot.
+
+* Branch: `tesla-hw1-port`
+* Installer: `https://installer.comma.ai/rampage1999/tesla-hw1-port`
+* Platforms: `TESLA_MODEL_S_HW1`, `TESLA_MODEL_X_HW1`
+* Harness: Tesla Model S/X HW1 connector, harness box, long OBD-C cable, USB-C coupler
+
+What the port contains:
+
+* HW1 platform configs, fingerprints and CarDocs entries in opendbc
+* Legacy Tesla CAN parsing (`teslacan_legacy.py`, `tesla_can.dbc`) for the pre-Autopilot signal layout, plus `tesla_raven_party.dbc`
+* Bosch radar support for HW1 cars (`radar_interface.py`)
+* A dedicated panda safety mode, `tesla_legacy.h`, with HW1 ignition handling
+* sunnypilot car list / carstate extensions and torque overrides for the legacy platforms
+* locationd, calibrationd and paramsd adjustments for the slower legacy sensor set
+
+Verified on a 2014-16 Model S: the car fingerprints as `TESLA_MODEL_S_HW1`, `dashcamOnly` is false, and openpilot engaged and drove the car with no alerts logged in the route.
+
+⚠️ HW1 support is experimental. Legacy CAN is slower and this platform has far less testing than HW2+/HW3 cars. Treat every drive as a test drive, keep your hands on the wheel and be ready to take over immediately.
+
 ## 🎆 Pull Requests
 We welcome both pull requests and issues on GitHub. Bug fixes are encouraged.
 
