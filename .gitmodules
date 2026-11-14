@@ -20,3 +20,9 @@
 	path = openpilot/sunnypilot/neural_network_data
   url = https://github.com/sunnypilot/neural-network-data.git
 
+[submodule "tools/bogpilot-fingerprint"]
+	path = tools/bogpilot-fingerprint
+	url = https://github.com/BogPilot/bogpilot-fingerprint.git
+[submodule "tools/driver-mover"]
+	path = tools/driver-mover
+	url = https://github.com/BogPilot/Driver-Mover.git
