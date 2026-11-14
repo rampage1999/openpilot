@@ -37,6 +37,7 @@ What the port contains:
 * AP1 hands-on pause: firm EPAS torque withholds lateral without dropping cruise and resumes 0.3 s after the driver lets go
 * AP1 regen-sized comfort braking: 1.0 m/s² lead-approach cost so regen does the work before friction brakes join
 * AP1 accel shaping: 2.5 m/s³ rising, 2.0→8 m/s³ brake onset, −1.0 standstill floor, gas-neutral frame
+* Follows the car's own speed-limit signs: the Mobileye `DAS_fusedSpeedLimit` on `AutopilotStatus` (0x399) now reaches `carStateSP.speedLimit`, and with `SpeedLimitMode=assist` + `SpeedLimitPolicy=car_state_priority` a sign change moves the set speed (and the cluster set speed) to the new limit
 * Tools: `tools/bogpilot-fingerprint` (PII-safe rlog → fingerprint export) and `tools/driver-mover` (driver-monitoring overlay video)
 
 Verified on a 2014-16 Model S: the car fingerprints as `TESLA_MODEL_S_HW1`, `dashcamOnly` is false, and openpilot engaged and drove the car with no alerts logged in the route.
