@@ -15,6 +15,8 @@ from openpilot.sunnypilot.selfdrive.car.intelligent_cruise_button_management.hel
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.speed_limit_assist import ACTIVE_STATES as SLA_ACTIVE_STATES
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.helpers import compare_cluster_target
 
+AP1_CARS = ("TESLA_MODEL_S_HW1", "TESLA_MODEL_X_HW1")
+
 ButtonType = car.CarState.ButtonEvent.Type
 SpeedLimitAssistState = custom.LongitudinalPlanSP.SpeedLimit.AssistState
 
@@ -134,6 +136,25 @@ class VCruiseHelperSP:
     if self.sla_state in SLA_ACTIVE_STATES and (self.prev_sla_state not in SLA_ACTIVE_STATES or
                                                 self.update_speed_limit_final_last_changed):
       self.v_cruise_kph = np.clip(round(self.speed_limit_final_last_kph, 1), self.v_cruise_min, V_CRUISE_MAX)
+
+    self.prev_sla_state = self.sla_state
+    self.prev_speed_limit_final_last_kph = self.speed_limit_final_last_kph
+
+  def update_speed_limit_assist_v_cruise_pcm(self) -> None:
+    """Apply the SLC set speed on pcmCruiseSpeed cars (Tesla HW1/AP1).
+
+    Normally v_cruise follows the car's own cruise set. On HW1 openpilot owns
+    longitudinal, so when Speed Limit Assist is active the posted limit must
+    win over the stale stock set speed; otherwise a sign change never moves
+    the car's target speed.
+    """
+    if str(self.CP.carFingerprint) not in AP1_CARS:
+      return
+
+    if self.sla_state in SLA_ACTIVE_STATES and (self.prev_sla_state not in SLA_ACTIVE_STATES or
+                                                self.update_speed_limit_final_last_changed):
+      self.v_cruise_kph = np.clip(round(self.speed_limit_final_last_kph, 1), self.v_cruise_min, V_CRUISE_MAX)
+      self.v_cruise_cluster_kph = self.v_cruise_kph
 
     self.prev_sla_state = self.sla_state
     self.prev_speed_limit_final_last_kph = self.speed_limit_final_last_kph

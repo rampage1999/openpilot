@@ -64,6 +64,8 @@ class VCruiseHelper(VCruiseHelperSP):
         elif CS.cruiseState.speed == -1:
           self.v_cruise_kph = -1
           self.v_cruise_cluster_kph = -1
+        # Tesla HW1: Speed Limit Assist owns the set speed while active
+        self.update_speed_limit_assist_v_cruise_pcm()
     else:
       self.v_cruise_kph = V_CRUISE_UNSET
       self.v_cruise_cluster_kph = V_CRUISE_UNSET
