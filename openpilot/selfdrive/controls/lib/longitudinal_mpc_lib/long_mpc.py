@@ -4,6 +4,7 @@ import time
 import numpy as np
 from openpilot.cereal import log
 from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
+from opendbc.car.tesla.regen_brake import obstacle_shift
 from openpilot.common.realtime import DT_MDL
 from openpilot.common.swaglog import cloudlog
 # WARNING: imports outside of constants will not trigger a rebuild
@@ -215,6 +216,9 @@ class LongitudinalMpc:
   def __init__(self, dt=DT_MDL):
     self.dt = dt
     self.solver = AcadosOcpSolverCython(MODEL_NAME, ACADOS_SOLVER_TYPE, N)
+    # AP1 regen-sized comfort brake: the solver keeps the stock COMFORT_BRAKE
+    # constant; a smaller value here shifts x_obstacle to emulate it.
+    self.comfort_brake = COMFORT_BRAKE
     self.reset()
     self.source = LongitudinalPlanSource.cruise
 
@@ -329,7 +333,7 @@ class LongitudinalMpc:
 
     self.params[:,0] = ACCEL_MIN
     self.params[:,1] = ACCEL_MAX
-    self.params[:,2] = np.min(x_obstacles, axis=1)
+    self.params[:,2] = np.min(x_obstacles, axis=1) - obstacle_shift(self.x0[1], self.comfort_brake)
     self.params[:,3] = np.copy(self.a_prev)
     self.params[:,4] = t_follow
     self.params[:,5] = LEAD_DANGER_FACTOR
